@@ -139,6 +139,8 @@ RTF_LOG = os.environ.get('CRAZYSIM_RTF_LOG') == '1'  # print the real-time facto
 # Ground truth for estimator checks: CSV of wall time, agent, world pos, world vel, quat (w,x,y,z), body rates
 TRUTH_LOG = os.environ.get('CRAZYSIM_TRUTH_LOG')
 TRUTH_RATE_HZ = float(os.environ.get('CRAZYSIM_TRUTH_RATE_HZ', 100))
+# Setpoint arrivals for commander-watchdog checks: CSV of wall time, agent, CRTP header (ports 3 and 7)
+SETPOINT_LOG = open(os.environ['CRAZYSIM_SETPOINT_LOG'], 'w', buffering=1) if os.environ.get('CRAZYSIM_SETPOINT_LOG') else None
 # Mocap-like imperfections on the pose sent to the firmware (default: exact and instant)
 POSE_NOISE_M = float(os.environ.get('CRAZYSIM_POSE_NOISE_M', 0.0))        # position std dev [m]
 POSE_LATENCY_S = float(os.environ.get('CRAZYSIM_POSE_LATENCY_MS', 0.0)) / 1000.0
@@ -894,6 +896,8 @@ class DroneAgent:
                     self._cflib_sock.sendto(bytes([0xFF]), addr)
                 except OSError:
                     pass
+            if SETPOINT_LOG is not None and (data[0] >> 4) in (0x03, 0x07):  # commander / generic commander
+                SETPOINT_LOG.write(f'{time.time():.4f},{self.agent_id},{data[0]}\n')
             if self._firmware_addr is not None:
                 try:
                     self._sock.sendto(data, self._firmware_addr)
