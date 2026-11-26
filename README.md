@@ -15,6 +15,7 @@ Simulator link: CRTP port `0x0B` (`CRTP_PORT_SIM` in `simulator_files/mujoco/cra
 firmware's `crtp.h` and the Gazebo plugin's `CrtpUtils.h`); all three must match. On macOS the viewer runs under `mjpython`.
 The simulator paces itself against wall-clock deadlines (the firmware runs on wall-clock time) and sends external pose at
 `CRAZYSIM_POSE_RATE_HZ` (default 100, mocap-like; 1 kHz pose degrades Kalman/controller tracking noticeably).
+In the viewer the propellers spin with the simulated motor RPM, slowed by `CRAZYSIM_PROP_VIS_SCALE` (default 0.02; 1.0 is real speed, which aliases at the render rate). This only changes the rendering.
 The Gazebo plugin is built from `simulator_files/gazebo/plugins/CrazySim` into `build/crazysim_gz` (override with `CRAZYSIM_GZ_BUILD_DIR`).
 
 

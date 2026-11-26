@@ -132,6 +132,9 @@ except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
 RPM_TO_RADS = 2.0 * math.pi / 60.0
+# Viewer-only prop spin: on-screen speed = real RPM x scale. Real hover (~280 rev/s) aliases at
+# 60 FPS, so the default slows it to ~5-9 rev/s while staying proportional to motor speed.
+PROP_VIS_SCALE = float(os.environ.get('CRAZYSIM_PROP_VIS_SCALE', 0.02))
 RADS_TO_RPM = 60.0 / (2.0 * math.pi)
 
 
@@ -707,6 +710,14 @@ class DroneAgent:
         self._rpm_dot = np.zeros(4)  # RPM/s for gyroscopic z-torque
         self._motor_lock = threading.Lock()
 
+        # Prop bodies are massless and non-colliding, so spinning them is visual only.
+        try:
+            self._prop_body = [model.body(f'{prefix}prop{i}').id for i in range(4)]
+        except KeyError:  # model without separate prop bodies
+            self._prop_body = []
+        self._prop_quat0 = [model.body_quat[b].copy() for b in self._prop_body]
+        self._prop_angle = np.zeros(4)
+
         # LED material indices (for dynamic color updates from firmware)
         # Index 0 = bottom, index 1 = top
         self._led_bot_mat_id = mujoco.mj_name2id(
@@ -1140,6 +1151,16 @@ class DroneAgent:
             except queue.Empty:
                 break
 
+    def update_prop_visuals(self, model: mujoco.MjModel, dt: float) -> None:
+        """Rotate each prop about its own z axis by its motor speed (viewer only)."""
+        if not self._prop_body:
+            return
+        # MOTOR_DIR is the reaction-torque sign on the body, i.e. opposite to the prop spin.
+        self._prop_angle = (self._prop_angle - MOTOR_DIR * self._rpm * RPM_TO_RADS * PROP_VIS_SCALE * dt) % (2.0 * math.pi)
+        for b, q0, a in zip(self._prop_body, self._prop_quat0, self._prop_angle):
+            spin = np.array([math.cos(a / 2.0), 0.0, 0.0, math.sin(a / 2.0)])
+            mujoco.mju_mulQuat(model.body_quat[b], q0, spin)
+
     def update_led_materials(self):
         """Apply the latest LED RGB colors to MuJoCo materials and light sources."""
         with self._led_lock:
@@ -1366,6 +1387,7 @@ class CrazySimMuJoCo:
                 # Force initial camera: look from behind drone toward +X.
                 _cam_init_frames = 5
                 _last_render = 0.0
+                _last_prop_t = self.data.time
                 while v.is_running() and self._running:
                     t0 = time.perf_counter()
                     with v.lock():
@@ -1379,6 +1401,10 @@ class CrazySimMuJoCo:
                             _cam_init_frames -= 1
                     _update_rtf()
                     if t0 - _last_render >= _render_interval:
+                        with v.lock():
+                            for agent in self.agents:
+                                agent.update_prop_visuals(self.model, self.data.time - _last_prop_t)
+                            _last_prop_t = self.data.time
                         v.set_texts((
                             mujoco.mjtFontScale.mjFONTSCALE_150,
                             mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT,
