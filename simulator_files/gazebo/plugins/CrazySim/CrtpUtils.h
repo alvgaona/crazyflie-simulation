@@ -6,7 +6,7 @@
 #include <cmath>
 #include "crtp.h"
 
-#define CRTP_PORT_SETPOINT_SIM 0x09
+#define CRTP_PORT_SETPOINT_SIM 0x0B  // 0x09 is CRTP_PORT_SUPERVISOR
 #define CRTP_PORT_LOCALIZATION 0x06
 #define CRTP_LOC_CHANNEL_EXT_POS 0x00
 #define CRTP_LOC_CHANNEL_GEN_LOC 0x01

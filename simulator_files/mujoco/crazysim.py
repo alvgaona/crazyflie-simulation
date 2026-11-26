@@ -8,21 +8,21 @@ Protocol (socketlink.c / CrtpUtils.h):
     Firmware → sim : 0xF3 (1 byte)
     Sim → firmware : 0xF3 (1 byte)
 
-  IMU packet (sim → firmware, CRTP port 0x09 ch 0):
-    byte 0    : header = 0x90
+  IMU packet (sim → firmware, CRTP port 0x0B ch 0):
+    byte 0    : header = 0xB0
     byte 1    : type   = SENSOR_GYRO_ACC_SIM (0)
     bytes 2-7 : Axis3i16 acc  (3 × int16, little-endian)
     bytes 8-13: Axis3i16 gyro (3 × int16, little-endian)
 
-  Baro packet (sim → firmware, CRTP port 0x09 ch 0):
-    byte 0    : header = 0x90
+  Baro packet (sim → firmware, CRTP port 0x0B ch 0):
+    byte 0    : header = 0xB0
     byte 1    : type   = SENSOR_BARO_SIM (2)
     bytes 2-5 : float  pressure   [mbar]
     bytes 6-9 : float  temperature [°C]
     bytes 10-13: float asl        [m]
 
-  Range packet (sim → firmware, CRTP port 0x09 ch 0):
-    byte 0    : header = 0x90
+  Range packet (sim → firmware, CRTP port 0x0B ch 0):
+    byte 0    : header = 0xB0
     byte 1    : type   = SENSOR_RANGE_SIM (3)
     bytes 2-21: 5 × float32 (front, back, left, right, up) [m]
 
@@ -31,8 +31,8 @@ Protocol (socketlink.c / CrtpUtils.h):
     byte 1    : id     = CRTP_GEN_LOC_ID_EXT_POS (0x08)
     bytes 2-29: x,y,z,qx,qy,qz,qw as float32
 
-  Motor packet (firmware → sim, CRTP port 0x09 ch 0):
-    byte 0    : header = 0x90
+  Motor packet (firmware → sim, CRTP port 0x0B ch 0):
+    byte 0    : header = 0xB0
     bytes 1-8 : 4 × uint16 motor PWM [0..65535]
 
 Supported model types (--model-type):
@@ -73,11 +73,11 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # CRTP constants (CrtpUtils.h)
 # ---------------------------------------------------------------------------
-CRTP_PORT_SIM    = 0x09
+CRTP_PORT_SIM    = 0x0B  # 0x09 is CRTP_PORT_SUPERVISOR in current firmware/cflib
 CRTP_PORT_LOC    = 0x06
-CRTP_HDR_SIM     = (CRTP_PORT_SIM << 4) | 0           # 0x90  (SIM port, ch 0 — motors)
-CRTP_HDR_LED     = (CRTP_PORT_SIM << 4) | 1           # 0x91  (SIM port, ch 1 — LED RGB)
-CRTP_HDR_HEADLIGHT = (CRTP_PORT_SIM << 4) | 2         # 0x92  (SIM port, ch 2 — headlight)
+CRTP_HDR_SIM     = (CRTP_PORT_SIM << 4) | 0           # 0xB0  (SIM port, ch 0 — motors)
+CRTP_HDR_LED     = (CRTP_PORT_SIM << 4) | 1           # 0xB1  (SIM port, ch 1 — LED RGB)
+CRTP_HDR_HEADLIGHT = (CRTP_PORT_SIM << 4) | 2         # 0xB2  (SIM port, ch 2 — headlight)
 CRTP_HDR_LOC     = (CRTP_PORT_LOC << 4) | (1 << 2) | 1  # 0x65
 
 SENSOR_GYRO_ACC  = 0

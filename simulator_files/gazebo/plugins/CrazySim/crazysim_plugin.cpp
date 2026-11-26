@@ -225,7 +225,7 @@ void GzCrazyflieInterface::recvCfFirmwareThread() {
 			uint8_t data[1] = {0xF3};
 			sendCfFirmware(data , sizeof(data));
 		}
-		else if (socketInit && (crtp(buf[0]) == crtp(0x09,0)) && (len == 9)) // Motor command message
+		else if (socketInit && (crtp(buf[0]) == crtp(CRTP_PORT_SETPOINT_SIM,0)) && (len == 9)) // Motor command message
 			handleMotorsMessage(&buf[0]);
 		else if (socketInit && cfLibAddrInitialized_){
 			crtpPacket_t packet;
