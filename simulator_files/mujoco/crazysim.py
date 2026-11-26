@@ -142,6 +142,7 @@ TRUTH_RATE_HZ = float(os.environ.get('CRAZYSIM_TRUTH_RATE_HZ', 100))
 # Mocap-like imperfections on the pose sent to the firmware (default: exact and instant)
 POSE_NOISE_M = float(os.environ.get('CRAZYSIM_POSE_NOISE_M', 0.0))        # position std dev [m]
 POSE_LATENCY_S = float(os.environ.get('CRAZYSIM_POSE_LATENCY_MS', 0.0)) / 1000.0
+DRAG_SCALE = float(os.environ.get('CRAZYSIM_DRAG_SCALE', 1.0))  # scales the identified body drag (0 = off)
 PROP_VIS_SCALE = float(os.environ.get('CRAZYSIM_PROP_VIS_SCALE', 0.02))
 RADS_TO_RPM = 60.0 / (2.0 * math.pi)
 
@@ -344,6 +345,7 @@ class SensorNoiseModel:
         # Wandering bias (starts at zero, drifts over time)
         self._acc_bias_walk = np.zeros(3)
         self._gyro_bias_walk = np.zeros(3)
+        self._k = self._BATCH  # forces _refill() on first use
 
         print(f'[sensor] acc  bias: [{self._acc_bias_fixed[0]:+.4f}, '
               f'{self._acc_bias_fixed[1]:+.4f}, {self._acc_bias_fixed[2]:+.4f}] m/s²')
@@ -353,18 +355,30 @@ class SensorNoiseModel:
         print(f'[sensor] gyro scale: [{self._gyro_scale[0]:.4f}, '
               f'{self._gyro_scale[1]:.4f}, {self._gyro_scale[2]:.4f}]')
 
+    _BATCH = 1000  # steps of noise drawn at once (1 s at 1 kHz)
+
+    def _refill(self):
+        """Precompute the additive terms (fixed bias + bias walk + white noise) for the next
+        _BATCH steps: they don't depend on the true signal, and one numpy call per batch is far
+        cheaper than four per drone per physics step."""
+        n, sdt = self._BATCH, self._sqrt_dt
+        r = np.random.normal(0.0, 1.0, (4, n, 3))
+        acc_walk = self._acc_bias_walk + np.cumsum(r[0] * self._acc_bw * sdt, axis=0)
+        gyro_walk = self._gyro_bias_walk + np.cumsum(r[1] * self._gyro_bw * sdt, axis=0)
+        self._acc_bias_walk, self._gyro_bias_walk = acc_walk[-1].copy(), gyro_walk[-1].copy()
+        # White noise: sampled at 1/dt, std = density * sqrt(rate) = density / sqrt(dt). (The bias
+        # walk above is a random walk, so its per-step increment scales with sqrt(dt) instead.)
+        self._acc_add = self._acc_bias_fixed + acc_walk + r[2] * self._acc_nd / sdt
+        self._gyro_add = self._gyro_bias_fixed + gyro_walk + r[3] * self._gyro_nd / sdt
+        self._k = 0
+
     def apply_imu_noise(self, acc: np.ndarray, gyro: np.ndarray) -> tuple:
         """Apply sensor model: output = scale * true + bias + noise + walk."""
-        # Bias walk
-        self._acc_bias_walk += np.random.normal(0, self._acc_bw * self._sqrt_dt, 3)
-        self._gyro_bias_walk += np.random.normal(0, self._gyro_bw * self._sqrt_dt, 3)
-        # White noise
-        acc_noise = np.random.normal(0, 1, 3) * self._acc_nd * self._sqrt_dt
-        gyro_noise = np.random.normal(0, 1, 3) * self._gyro_nd * self._sqrt_dt
-        # Full model
-        acc_out = self._acc_scale * acc + self._acc_bias_fixed + self._acc_bias_walk + acc_noise
-        gyro_out = self._gyro_scale * gyro + self._gyro_bias_fixed + self._gyro_bias_walk + gyro_noise
-        return acc_out, gyro_out
+        if self._k >= self._BATCH:
+            self._refill()
+        k = self._k
+        self._k += 1
+        return self._acc_scale * acc + self._acc_add[k], self._gyro_scale * gyro + self._gyro_add[k]
 
     def apply_baro_noise(self, alt_m: float) -> float:
         """Add Gaussian noise to barometer altitude reading."""
@@ -965,7 +979,7 @@ class DroneAgent:
         else:
             v_rel_world = lin_vel_world
         v_body = R.T @ v_rel_world
-        f_drag_body = p.drag_matrix @ v_body
+        f_drag_body = DRAG_SCALE * (p.drag_matrix @ v_body)
         f_drag_world = R @ f_drag_body
 
         # Gyroscopic precession: τ = -ω_body × h_rotor
