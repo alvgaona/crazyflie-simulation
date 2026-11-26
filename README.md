@@ -17,6 +17,7 @@ The simulator paces itself against wall-clock deadlines (the firmware runs on wa
 `CRAZYSIM_POSE_RATE_HZ` (default 100, mocap-like; 1 kHz pose degrades Kalman/controller tracking noticeably).
 In the viewer the propellers spin with the simulated motor RPM, slowed by `CRAZYSIM_PROP_VIS_SCALE` (default 0.02; 1.0 is real speed, which aliases at the render rate). This only changes the rendering.
 The viewer draws at `CRAZYSIM_VIEWER_FPS` (default 30). Each frame briefly blocks physics, so with many drones a higher rate can drop the sim below real time.
+Testing aids: `CRAZYSIM_RTF_LOG=1` prints the real-time factor every second; `CRAZYSIM_TRUTH_LOG=<file>` writes ground truth (wall time, agent, world position and velocity, attitude quaternion, body rates) at `CRAZYSIM_TRUTH_RATE_HZ` (default 100); `CRAZYSIM_POSE_NOISE_M` and `CRAZYSIM_POSE_LATENCY_MS` add mocap-like noise and delay to the pose sent to the firmware (default: exact and instant).
 The Gazebo plugin is built from `simulator_files/gazebo/plugins/CrazySim` into `build/crazysim_gz` (override with `CRAZYSIM_GZ_BUILD_DIR`).
 
 

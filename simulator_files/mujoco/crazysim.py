@@ -56,10 +56,11 @@ Multi-agent usage:
 """
 
 import argparse
+import collections
 import importlib.util
 import math
 import os
-import queue
+import select
 import socket
 import struct
 import threading
@@ -134,6 +135,13 @@ except ModuleNotFoundError:
 RPM_TO_RADS = 2.0 * math.pi / 60.0
 # Viewer-only prop spin: on-screen speed = real RPM x scale. Real hover (~280 rev/s) aliases at
 # 60 FPS, so the default slows it to ~5-9 rev/s while staying proportional to motor speed.
+RTF_LOG = os.environ.get('CRAZYSIM_RTF_LOG') == '1'  # print the real-time factor every second
+# Ground truth for estimator checks: CSV of wall time, agent, world pos, world vel, quat (w,x,y,z), body rates
+TRUTH_LOG = os.environ.get('CRAZYSIM_TRUTH_LOG')
+TRUTH_RATE_HZ = float(os.environ.get('CRAZYSIM_TRUTH_RATE_HZ', 100))
+# Mocap-like imperfections on the pose sent to the firmware (default: exact and instant)
+POSE_NOISE_M = float(os.environ.get('CRAZYSIM_POSE_NOISE_M', 0.0))        # position std dev [m]
+POSE_LATENCY_S = float(os.environ.get('CRAZYSIM_POSE_LATENCY_MS', 0.0)) / 1000.0
 PROP_VIS_SCALE = float(os.environ.get('CRAZYSIM_PROP_VIS_SCALE', 0.02))
 RADS_TO_RPM = 60.0 / (2.0 * math.pi)
 
@@ -751,6 +759,7 @@ class DroneAgent:
         # Baro accumulator
         self._baro_acc = 0.0
         self._pose_acc = 0.0
+        self._pose_delayed = collections.deque()  # (send at sim time, packet) for POSE_LATENCY_S
         # Range accumulator
         self._range_acc = 0.0
         # Geom group mask for raycasting (include all groups)
@@ -769,9 +778,6 @@ class DroneAgent:
         self._cflib_sock.bind((host, cflib_port))
         self._cflib_sock.settimeout(1.0)
         self._cflib_addr = None
-        self._cflib_addr_lock = threading.Lock()
-        self._firmware_to_cflib_q = queue.Queue(maxsize=20)
-        self._cflib_to_firmware_q = queue.Queue(maxsize=20)
 
         self._running = False
 
@@ -810,25 +816,26 @@ class DroneAgent:
                 print(f'[crazysim] Agent {self.agent_id}: firmware connected from {addr}')
                 return
 
-    def start_threads(self):
+    def start_io(self):
+        """Switch sockets to non-blocking; the physics loop polls them (see poll_sockets)."""
         self._running = True
-        threading.Thread(target=self._recv_thread, daemon=True).start()
-        threading.Thread(target=self._recv_cflib_thread, daemon=True).start()
-        threading.Thread(target=self._send_cflib_thread, daemon=True).start()
+        self._sock.setblocking(False)
+        self._cflib_sock.setblocking(False)
 
     def stop(self):
         self._running = False
         self._sock.close()
         self._cflib_sock.close()
 
-    def _recv_thread(self):
-        while self._running:
+    def drain_firmware(self):
+        """Handle every packet the firmware has sent since the last physics step."""
+        while True:
             try:
-                data, _ = self._sock.recvfrom(64)
-            except socket.timeout:
-                continue
+                data = self._sock.recv(64)
+            except (BlockingIOError, InterruptedError):
+                return
             except OSError:
-                break
+                return
             if len(data) < 1:
                 continue
             hdr = data[0]
@@ -850,27 +857,24 @@ class DroneAgent:
                 # Headlight on/off packet (SIM port, channel 2)
                 with self._headlight_lock:
                     self._headlight_on = bool(data[1])
-            else:
-                with self._cflib_addr_lock:
-                    has_cflib = self._cflib_addr is not None
-                if has_cflib:
-                    try:
-                        self._firmware_to_cflib_q.put_nowait(data)
-                    except queue.Full:
-                        pass
+            elif self._cflib_addr is not None:
+                try:
+                    self._cflib_sock.sendto(data, self._cflib_addr)
+                except OSError:
+                    pass
 
-    def _recv_cflib_thread(self):
-        while self._running:
+    def drain_cflib(self):
+        """Forward every packet cflib has sent since the last physics step to the firmware."""
+        while True:
             try:
                 data, addr = self._cflib_sock.recvfrom(64)
-            except socket.timeout:
-                continue
+            except (BlockingIOError, InterruptedError):
+                return
             except OSError:
-                break
+                return
             if len(data) < 1:
                 continue
-            with self._cflib_addr_lock:
-                self._cflib_addr = addr
+            self._cflib_addr = addr
             if len(data) == 1 and data[0] == 0xFF:
                 try:
                     self._cflib_sock.sendto(bytes([0xFF]), addr)
@@ -878,21 +882,7 @@ class DroneAgent:
                     pass
             if self._firmware_addr is not None:
                 try:
-                    self._cflib_to_firmware_q.put_nowait(data)
-                except queue.Full:
-                    pass
-
-    def _send_cflib_thread(self):
-        while self._running:
-            try:
-                data = self._firmware_to_cflib_q.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            with self._cflib_addr_lock:
-                addr = self._cflib_addr
-            if addr is not None:
-                try:
-                    self._cflib_sock.sendto(data, addr)
+                    self._sock.sendto(data, self._firmware_addr)
                 except OSError:
                     pass
 
@@ -933,7 +923,12 @@ class DroneAgent:
             rpm = self._rpm[i]
             thrust = a_t + b_t * rpm + c_t * rpm * rpm
             thrust = max(thrust, 0.0) * ge_factor
-            drag_torque = MOTOR_DIR[i] * (a_q + b_q * rpm + c_q * rpm * rpm)
+            # Yaw reaction on the body: rotor drag plus rotor inertia while the rotor speeds up or slows
+            # down (I_prop * dω/dt). The inertia term reacts instantly, before the motor lag lets drag
+            # build up; without it the yaw loop lags so much that Mellinger's yaw gains go unstable.
+            rpm_dot = (self._rpm[i] - rpm_prev[i]) / self.dt
+            drag_torque = MOTOR_DIR[i] * (a_q + b_q * rpm + c_q * rpm * rpm
+                                          + p.prop_inertia * rpm_dot * RPM_TO_RADS)
 
             self.data.ctrl[self._act_force[i]] = thrust
             self.data.ctrl[self._act_torque[i]] = drag_torque
@@ -1102,7 +1097,11 @@ class DroneAgent:
             self._pose_acc += self.dt
             if self._pose_acc >= 1.0 / POSE_RATE_HZ:
                 self._pose_acc -= 1.0 / POSE_RATE_HZ
-                self._sock.sendto(make_pose_packet(pos, quat), self._firmware_addr)
+                if POSE_NOISE_M > 0:
+                    pos = pos + np.random.normal(0.0, POSE_NOISE_M, 3)
+                self._pose_delayed.append((self.data.time + POSE_LATENCY_S, make_pose_packet(pos, quat)))
+            while self._pose_delayed and self._pose_delayed[0][0] <= self.data.time:
+                self._sock.sendto(self._pose_delayed.popleft()[1], self._firmware_addr)
 
         baro_period = 1.0 / BARO_RATE_HZ
         self._baro_acc += self.dt
@@ -1143,13 +1142,6 @@ class DroneAgent:
         if self._camera is not None:
             self._camera.maybe_render(self.model, self.data, self.dt)
 
-        # Drain cflib→firmware queue
-        while not self._cflib_to_firmware_q.empty():
-            try:
-                pkt = self._cflib_to_firmware_q.get_nowait()
-                self._sock.sendto(pkt, self._firmware_addr)
-            except queue.Empty:
-                break
 
     def update_prop_visuals(self, model: mujoco.MjModel, dt: float) -> None:
         """Rotate each prop about its own z axis by its motor speed (viewer only)."""
@@ -1335,10 +1327,23 @@ class CrazySimMuJoCo:
 
         self._running = True
         for agent in self.agents:
-            agent.start_threads()
+            agent.start_io()
+        # One select() per step over all sockets instead of 3 threads per drone: with many drones
+        # those threads fought the physics loop for the GIL and pushed it below real time.
+        _drains = {}
+        for agent in self.agents:
+            _drains[agent._sock] = agent.drain_firmware
+            _drains[agent._cflib_sock] = agent.drain_cflib
+        _socks = list(_drains)
+
+        _truth = open(TRUTH_LOG, 'w') if TRUTH_LOG else None  # small default buffer: little is lost if killed
+        _truth_acc = 0.0
 
         def _step_and_send():
             """One physics step + CRTP packet dispatch for all agents."""
+            nonlocal _truth_acc
+            for sock in select.select(_socks, [], [], 0)[0]:
+                _drains[sock]()
             for agent in self.agents:
                 agent.update_motors()
                 agent.apply_aero_effects()
@@ -1347,6 +1352,18 @@ class CrazySimMuJoCo:
             mujoco.mj_step(self.model, self.data)
             for agent in self.agents:
                 agent.send_sensor_data()
+            if _truth is not None:
+                _truth_acc += self.dt
+                if _truth_acc >= 1.0 / TRUTH_RATE_HZ:
+                    _truth_acc -= 1.0 / TRUTH_RATE_HZ
+                    now = time.time()
+                    for agent in self.agents:
+                        b, a = agent._body_id, agent._qvel_adr
+                        p, v, q = self.data.xpos[b], self.data.qvel[a:a + 3], self.data.xquat[b]
+                        w = self.data.qvel[a + 3:a + 6]  # body-frame angular velocity [rad/s]
+                        _truth.write(f'{now:.4f},{agent.agent_id},{p[0]:.4f},{p[1]:.4f},{p[2]:.4f},'
+                                     f'{v[0]:.4f},{v[1]:.4f},{v[2]:.4f},{q[0]:.5f},{q[1]:.5f},{q[2]:.5f},{q[3]:.5f},'
+                                     f'{w[0]:.4f},{w[1]:.4f},{w[2]:.4f}\n')
 
         # Real-time factor tracking
         _rtf_interval = 1.0  # seconds between RTF updates
@@ -1363,6 +1380,8 @@ class CrazySimMuJoCo:
                 _rtf_value = sim_dt / wall_dt if wall_dt > 0 else 0.0
                 _rtf_wall_start = wall_now
                 _rtf_sim_start = self.data.time
+                if RTF_LOG:
+                    print(f'[crazysim] rtf {_rtf_value:.4f} t={self.data.time:.1f}', flush=True)
 
         # Pace against absolute deadlines: sleep() overshoot (coarse on macOS) is made up on
         # the following steps instead of accumulating, so sim time keeps up with wall time,
