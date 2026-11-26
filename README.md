@@ -13,6 +13,8 @@ pixi run bash simulator_files/mujoco/launch/sitl_singleagent.sh -m cf2x_T350 -x 
 
 Simulator link: CRTP port `0x0B` (`CRTP_PORT_SIM` in `simulator_files/mujoco/crazysim.py`, `CRTP_PORT_SETPOINT_SIM` in the
 firmware's `crtp.h` and the Gazebo plugin's `CrtpUtils.h`); all three must match. On macOS the viewer runs under `mjpython`.
+The simulator paces itself against wall-clock deadlines (the firmware runs on wall-clock time) and sends external pose at
+`CRAZYSIM_POSE_RATE_HZ` (default 100, mocap-like; 1 kHz pose degrades Kalman/controller tracking noticeably).
 The Gazebo plugin is built from `simulator_files/gazebo/plugins/CrazySim` into `build/crazysim_gz` (override with `CRAZYSIM_GZ_BUILD_DIR`).
 
 

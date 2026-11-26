@@ -106,6 +106,8 @@ L_LAPSE  = 0.0065
 R_GAS    = 8.314
 M_AIR    = 0.0289644
 BARO_RATE_HZ = 50
+# External pose (mocap-like) rate. Override with env CRAZYSIM_POSE_RATE_HZ.
+POSE_RATE_HZ = float(os.environ.get('CRAZYSIM_POSE_RATE_HZ', 100))
 RANGE_RATE_HZ = 10         # Multi-ranger update rate (matches real hardware)
 RANGE_MAX_M   = 4.0        # VL53L1x max range [m]
 FLOW_RATE_HZ  = 100        # PMW3901 flow sensor update rate
@@ -737,6 +739,7 @@ class DroneAgent:
 
         # Baro accumulator
         self._baro_acc = 0.0
+        self._pose_acc = 0.0
         # Range accumulator
         self._range_acc = 0.0
         # Geom group mask for raycasting (include all groups)
@@ -1083,9 +1086,12 @@ class DroneAgent:
 
         self._sock.sendto(make_imu_packet(acc, gyro), self._firmware_addr)
 
-        # Send pose only when NOT using flowdeck
+        # Send pose only when NOT using flowdeck, at a mocap-like rate
         if not self._flowdeck:
-            self._sock.sendto(make_pose_packet(pos, quat), self._firmware_addr)
+            self._pose_acc += self.dt
+            if self._pose_acc >= 1.0 / POSE_RATE_HZ:
+                self._pose_acc -= 1.0 / POSE_RATE_HZ
+                self._sock.sendto(make_pose_packet(pos, quat), self._firmware_addr)
 
         baro_period = 1.0 / BARO_RATE_HZ
         self._baro_acc += self.dt
@@ -1338,6 +1344,20 @@ class CrazySimMuJoCo:
                 _rtf_wall_start = wall_now
                 _rtf_sim_start = self.data.time
 
+        # Pace against absolute deadlines: sleep() overshoot (coarse on macOS) is made up on
+        # the following steps instead of accumulating, so sim time keeps up with wall time,
+        # which the firmware's clocks run on.
+        _next_deadline = time.perf_counter()
+
+        def _pace():
+            nonlocal _next_deadline
+            _next_deadline += self.dt
+            ahead = _next_deadline - time.perf_counter()
+            if ahead > 0:
+                time.sleep(ahead)
+            elif ahead < -0.1:  # fell >100 ms behind (e.g. stall): resync, don't burst
+                _next_deadline = time.perf_counter()
+
         if self.visualize:
             _render_interval = 1.0 / 60.0  # 60 FPS render rate
             with mujoco.viewer.launch_passive(self.model, self.data,
@@ -1367,21 +1387,14 @@ class CrazySimMuJoCo:
                         ))
                         v.sync()
                         _last_render = t0
-                    elapsed = time.perf_counter() - t0
-                    sleep_t = self.dt - elapsed
-                    if sleep_t > 0:
-                        time.sleep(sleep_t)
+                    _pace()
             self._running = False
         else:
             try:
                 while self._running:
-                    t0 = time.perf_counter()
                     _step_and_send()
                     _update_rtf()
-                    elapsed = time.perf_counter() - t0
-                    sleep_t = self.dt - elapsed
-                    if sleep_t > 0:
-                        time.sleep(sleep_t)
+                    _pace()
             except KeyboardInterrupt:
                 pass
 
