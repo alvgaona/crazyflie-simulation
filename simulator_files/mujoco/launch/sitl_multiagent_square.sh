@@ -70,8 +70,8 @@ model_type=${MODEL_TYPE:="cf2x_T350"}
 dt=${DT:=0.001}
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-src_path="$SCRIPT_DIR/../../../../.."
-build_path=${src_path}/sitl_make/build
+sim_root="$SCRIPT_DIR/../../.."
+build_path=${CF2_BUILD_DIR:?set CF2_BUILD_DIR to <crazyflie-firmware>/sitl_make/build}
 crazysim_dir="$SCRIPT_DIR/.."
 
 echo "killing running crazyflie firmware instances"
@@ -97,7 +97,7 @@ while [ $n -lt $num_vehicles ]; do
 	[ ! -d "$working_dir" ] && mkdir -p "$working_dir"
 	pushd "$working_dir" &>/dev/null
 	echo "Starting firmware instance $n on port $((19950+$n)) at ($x_cord, $y_cord)"
-	stdbuf -oL $build_path/cf2 $((19950+${n})) > out.log 2> error.log &
+	$build_path/cf2 $((19950+${n})) > out.log 2> error.log &
 	popd &>/dev/null
 
 	n=$(($n + 1))
@@ -114,7 +114,7 @@ mass_arg=""
 scene_arg=""
 [ -n "${SCENE}" ] && scene_arg="--scene ${SCENE}"
 
-python3 "$crazysim_dir/crazysim.py" \
+$(if [ "$(uname)" = Darwin ]; then echo mjpython; else echo python3; fi) "$crazysim_dir/crazysim.py" \
 	--model-type "${model_type}" \
 	--port 19950 \
 	--vis \

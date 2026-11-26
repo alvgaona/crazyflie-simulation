@@ -44,8 +44,8 @@ scene_arg=""
 [ -n "${SCENE}" ] && scene_arg="--scene ${SCENE}"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-src_path="$SCRIPT_DIR/../../../../.."
-build_path=${src_path}/sitl_make/build
+sim_root="$SCRIPT_DIR/../../.."
+build_path=${CF2_BUILD_DIR:?set CF2_BUILD_DIR to <crazyflie-firmware>/sitl_make/build}
 crazysim_dir="$SCRIPT_DIR/.."
 
 echo "killing running instances"
@@ -73,7 +73,7 @@ sleep 1
 
 # Start MuJoCo crazysim with camera (foreground)
 echo "Connect with: python3 crazyflie-lib-python/examples/aideck/fpv.py tcp://127.0.0.1:5050"
-python3 "$crazysim_dir/crazysim.py" \
+$(if [ "$(uname)" = Darwin ]; then echo mjpython; else echo python3; fi) "$crazysim_dir/crazysim.py" \
 	--model-type "${model_type}" \
 	--port 19950 \
 	--vis \

@@ -13,3 +13,8 @@ simulator_files/gazebo/launch/drone_spawn_list/
 simulator_files/mujoco/__pycache__/
 simulator_files/mujoco/*.pyc
 
+
+# pixi environments
+.pixi/
+# Gazebo plugin build (CRAZYSIM_GZ_BUILD_DIR default)
+build/

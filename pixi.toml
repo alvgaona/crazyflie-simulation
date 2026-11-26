@@ -1,0 +1,13 @@
+[workspace]
+name = "crazyflie-simulation"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
+
+[dependencies]
+python = "3.12.*"
+mujoco = ">=3.0"
+numpy = ">=1.24"
+
+[pypi-dependencies]
+# Crazyflie MJCF models + params.toml (utiasDSL/drone-models); data identical to the former submodule pin 512c864.
+drone-models = "==0.1.0"

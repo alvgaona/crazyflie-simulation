@@ -20,7 +20,7 @@ if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
 	echo ""
 	echo "Model types: cf2x_T350 (default), cf2x_L250, cf2x_P250, cf21B_500"
 	echo "Scene files: scene.xml (default), scene_obstacles.xml"
-	echo "Coordinates files are in: tools/crazyflie-simulation/drone_spawn_list/"
+	echo "Coordinates files are in: drone_spawn_list/"
 	echo ""
 	echo "Feature flags:"
 	echo "  --sensor-noise        BMI088 IMU noise model (bias, scale, white noise)"
@@ -71,10 +71,10 @@ coordinates_file=${COORDINATES_FILE:="single_origin.txt"}
 dt=${DT:=0.001}
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-src_path="$SCRIPT_DIR/../../../../.."
-build_path=${src_path}/sitl_make/build
+sim_root="$SCRIPT_DIR/../../.."
+build_path=${CF2_BUILD_DIR:?set CF2_BUILD_DIR to <crazyflie-firmware>/sitl_make/build}
 crazysim_dir="$SCRIPT_DIR/.."
-spawn_list_dir="${src_path}/tools/crazyflie-simulation/drone_spawn_list"
+spawn_list_dir="${sim_root}/drone_spawn_list"
 
 if [ ! -f "${spawn_list_dir}/${coordinates_file}" ]; then
 	echo "ERROR: Coordinates file not found: ${spawn_list_dir}/${coordinates_file}"
@@ -101,7 +101,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 	[ ! -d "$working_dir" ] && mkdir -p "$working_dir"
 	pushd "$working_dir" &>/dev/null
 	echo "Starting firmware instance $n on port $((19950+$n)) at ($x_cord, $y_cord)"
-	stdbuf -oL $build_path/cf2 $((19950+${n})) > out.log 2> error.log &
+	$build_path/cf2 $((19950+${n})) > out.log 2> error.log &
 	popd &>/dev/null
 
 	n=$(($n + 1))
@@ -118,7 +118,7 @@ mass_arg=""
 scene_arg=""
 [ -n "${SCENE}" ] && scene_arg="--scene ${SCENE}"
 
-python3 "$crazysim_dir/crazysim.py" \
+$(if [ "$(uname)" = Darwin ]; then echo mjpython; else echo python3; fi) "$crazysim_dir/crazysim.py" \
 	--model-type "${model_type}" \
 	--port 19950 \
 	--vis \

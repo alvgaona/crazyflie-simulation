@@ -56,6 +56,7 @@ Multi-agent usage:
 """
 
 import argparse
+import importlib.util
 import math
 import os
 import queue
@@ -154,11 +155,16 @@ def _max_rpm(rpm2thrust: tuple[float, float, float], thrust_max: float) -> float
     return (-b + math.sqrt(max(disc, 0.0))) / (2.0 * c)
 
 
+# drone-models (utiasDSL) is a pixi/pip dependency; locate its data dir without importing it (heavy deps).
+_drone_models_spec = importlib.util.find_spec('drone_models')
+if _drone_models_spec is None:
+    raise SystemExit('drone-models is not installed: run through pixi (pixi run ...) or pip install drone-models')
+_DRONE_MODELS_DATA = os.path.join(_drone_models_spec.submodule_search_locations[0], 'data')
+
+
 def _load_motor_params() -> dict[str, MotorParams]:
-    """Load motor parameters from the drone-models submodule params.toml."""
-    params_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        'drone-models', 'drone_models', 'data', 'params.toml')
+    """Load motor parameters from drone-models' params.toml."""
+    params_path = os.path.join(_DRONE_MODELS_DATA, 'params.toml')
     with open(params_path, 'rb') as f:
         all_params = tomllib.load(f)
     result = {}
@@ -186,9 +192,7 @@ def _load_motor_params() -> dict[str, MotorParams]:
 
 MOTOR_PARAMS: dict[str, MotorParams] = _load_motor_params()
 
-# Default MJCF paths per model type (relative to this script).
-# Models come from the drone-models submodule (utiasDSL/drone-models).
-_DRONE_MODELS_DATA = 'drone-models/drone_models/data'
+# Default MJCF paths per model type, from the drone-models package (utiasDSL/drone-models).
 MODEL_PATHS: dict[str, str] = {
     name: f'{_DRONE_MODELS_DATA}/{name}.xml' for name in MOTOR_PARAMS
 }

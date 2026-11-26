@@ -27,9 +27,9 @@ function spawn_model() {
 
 
 	set --
-	set -- ${@} ${src_path}/tools/crazyflie-simulation/simulator_files/gazebo/launch/jinja_gen.py
-	set -- ${@} ${src_path}/tools/crazyflie-simulation/simulator_files/gazebo/models/${MODEL}/model.sdf.jinja
-	set -- ${@} ${src_path}/tools/crazyflie-simulation/simulator_files/gazebo
+	set -- ${@} ${sim_root}/simulator_files/gazebo/launch/jinja_gen.py
+	set -- ${@} ${sim_root}/simulator_files/gazebo/models/${MODEL}/model.sdf.jinja
+	set -- ${@} ${sim_root}/simulator_files/gazebo
 	set -- ${@} --cffirm_udp_port $((19950+${N}))
 	set -- ${@} --cflib_udp_port $((19850+${N}))
 	set -- ${@} --cf_id $((${N}))
@@ -72,19 +72,19 @@ vehicle_model=${VEHICLE_MODEL:="crazyflie"}
 export CF2_SIM_MODEL=gz_${vehicle_model}
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-src_path="$SCRIPT_DIR/../../../../.."
+sim_root="$SCRIPT_DIR/../../.."
 
-build_path=${src_path}/sitl_make/build
+build_path=${CF2_BUILD_DIR:?set CF2_BUILD_DIR to <crazyflie-firmware>/sitl_make/build}
 
 echo "killing running crazyflie firmware instances"
 pkill -x cf2 || true
 
 sleep 1
 
-source ${src_path}/tools/crazyflie-simulation/simulator_files/gazebo/launch/setup_gz.bash ${src_path} ${build_path}
+source ${sim_root}/simulator_files/gazebo/launch/setup_gz.bash ${sim_root} ${CRAZYSIM_GZ_BUILD_DIR:-${sim_root}/build/crazysim_gz}
 
 echo "Starting gazebo"
-gz sim -s -r ${src_path}/tools/crazyflie-simulation/simulator_files/gazebo/worlds/${world}.sdf -v 3 &
+gz sim -s -r ${sim_root}/simulator_files/gazebo/worlds/${world}.sdf -v 3 &
 sleep 3
 
 if [ $num_vehicles -gt 255 ]

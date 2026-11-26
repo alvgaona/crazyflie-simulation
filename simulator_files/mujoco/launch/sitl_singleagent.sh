@@ -69,8 +69,8 @@ y_cord=${Y_CORD:=0}
 dt=${DT:=0.001}
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-src_path="$SCRIPT_DIR/../../../../.."
-build_path=${src_path}/sitl_make/build
+sim_root="$SCRIPT_DIR/../../.."
+build_path=${CF2_BUILD_DIR:?set CF2_BUILD_DIR to <crazyflie-firmware>/sitl_make/build}
 crazysim_dir="$SCRIPT_DIR/.."
 
 echo "killing running crazyflie firmware instances"
@@ -82,7 +82,7 @@ working_dir="$build_path/0"
 [ ! -d "$working_dir" ] && mkdir -p "$working_dir"
 pushd "$working_dir" &>/dev/null
 echo "Starting firmware instance 0 on port 19950"
-stdbuf -oL $build_path/cf2 19950 > out.log 2> error.log &
+$build_path/cf2 19950 > out.log 2> error.log &
 popd &>/dev/null
 
 sleep 1
@@ -95,7 +95,7 @@ mass_arg=""
 [ -n "${MASS}" ] && mass_arg="--mass ${MASS}"
 scene_arg=""
 [ -n "${SCENE}" ] && scene_arg="--scene ${SCENE}"
-python3 "$crazysim_dir/crazysim.py" \
+$(if [ "$(uname)" = Darwin ]; then echo mjpython; else echo python3; fi) "$crazysim_dir/crazysim.py" \
 	--model-type "${model_type}" \
 	--port 19950 \
 	--vis \
