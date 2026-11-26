@@ -220,12 +220,12 @@ def _infer_model_type(model_path: str) -> str | None:
 
 def acc_to_lsb(a: float) -> int:
     """Accelerometer [m/s²] → int16 LSB."""
-    return int(np.clip(a / (SENSORS_G_PER_LSB * GRAVITY), -32768, 32767))
+    return int(min(max(a / (SENSORS_G_PER_LSB * GRAVITY), -32768), 32767))
 
 
 def gyro_to_lsb(w: float) -> int:
     """Gyro [rad/s] → int16 LSB."""
-    return int(np.clip(w / (SENSORS_DEG_PER_LSB * DEG_TO_RAD), -32768, 32767))
+    return int(min(max(w / (SENSORS_DEG_PER_LSB * DEG_TO_RAD), -32768), 32767))
 
 
 def alt_to_pressure_mbar(alt_m: float) -> float:
@@ -928,7 +928,7 @@ class DroneAgent:
         for i in range(4):
             tau = p.tau_up if rpm_ref[i] >= self._rpm[i] else p.tau_down
             self._rpm[i] += (rpm_ref[i] - self._rpm[i]) * self.dt / tau
-            self._rpm[i] = np.clip(self._rpm[i], 0.0, p.max_rpm)
+            self._rpm[i] = min(max(self._rpm[i], 0.0), p.max_rpm)
 
             rpm = self._rpm[i]
             thrust = a_t + b_t * rpm + c_t * rpm * rpm
@@ -1342,7 +1342,6 @@ class CrazySimMuJoCo:
             for agent in self.agents:
                 agent.update_motors()
                 agent.apply_aero_effects()
-                agent.update_led_materials()
             if self._downwash and self.num_agents > 1:
                 self._apply_downwash()
             mujoco.mj_step(self.model, self.data)
@@ -1380,7 +1379,8 @@ class CrazySimMuJoCo:
                 _next_deadline = time.perf_counter()
 
         if self.visualize:
-            _render_interval = 1.0 / 60.0  # 60 FPS render rate
+            # 30 FPS: each sync() waits on the render thread, which costs physics real time with many drones
+            _render_interval = 1.0 / float(os.environ.get('CRAZYSIM_VIEWER_FPS', 30))
             with mujoco.viewer.launch_passive(self.model, self.data,
                                               show_left_ui=False,
                                               show_right_ui=False) as v:
@@ -1388,29 +1388,35 @@ class CrazySimMuJoCo:
                 _cam_init_frames = 5
                 _last_render = 0.0
                 _last_prop_t = self.data.time
+                _last_text_t = -1.0
                 while v.is_running() and self._running:
                     t0 = time.perf_counter()
-                    with v.lock():
-                        _step_and_send()
-                        if _cam_init_frames > 0:
+                    # No viewer lock per step: the passive viewer copies state in v.sync() (this
+                    # thread), and locking at 1 kHz starves physics against the render thread.
+                    _step_and_send()
+                    if _cam_init_frames > 0:
+                        with v.lock():
                             v.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
                             v.cam.azimuth = 0.0
                             v.cam.elevation = -20.0
                             v.cam.distance = 3.0
                             v.cam.lookat[:] = [0.0, 0.0, 0.5]
-                            _cam_init_frames -= 1
+                        _cam_init_frames -= 1
                     _update_rtf()
                     if t0 - _last_render >= _render_interval:
                         with v.lock():
                             for agent in self.agents:
+                                agent.update_led_materials()  # visual only: at render rate, not per physics step
                                 agent.update_prop_visuals(self.model, self.data.time - _last_prop_t)
                             _last_prop_t = self.data.time
-                        v.set_texts((
-                            mujoco.mjtFontScale.mjFONTSCALE_150,
-                            mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT,
-                            f'RTF: {_rtf_value:.2f}x',
-                            f't={self.data.time:.1f}s',
-                        ))
+                        if self.data.time - _last_text_t >= 1.0:  # set_texts also waits on the render thread
+                            v.set_texts((
+                                mujoco.mjtFontScale.mjFONTSCALE_150,
+                                mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT,
+                                f'RTF: {_rtf_value:.2f}x',
+                                f't={self.data.time:.0f}s',
+                            ))
+                            _last_text_t = self.data.time
                         v.sync()
                         _last_render = t0
                     _pace()
